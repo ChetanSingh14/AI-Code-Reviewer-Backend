@@ -1,4 +1,4 @@
-import express, { Application } from 'express';
+import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 
@@ -14,12 +14,8 @@ app.use(helmet());
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Mount Feature Modules
-app.use('/api/v1/review', reviewRoutes);
-app.use('/api/v1/webhook', webhookRoutes);
-
-// Health Check Endpoint
-app.get('/health', (req, res) => {
+// 1. Health Check Endpoint (Explicitly placed before other routes)
+app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
     status: 'OK',
     service: 'AI Code Reviewer Backend',
@@ -27,7 +23,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Centralized Error Handler
+// 2. Mount Feature Modules
+app.use('/api/v1/review', reviewRoutes);
+app.use('/api/v1/webhook', webhookRoutes);
+
+// 3. Centralized Error Handler
 app.use(errorHandler);
 
 export default app;
