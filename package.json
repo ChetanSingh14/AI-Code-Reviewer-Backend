@@ -1,15 +1,18 @@
 {
   "name": "ai-reviewer-backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "ts-node-dev --esm src/server.ts",
+    "dev": "ts-node-dev --esm --respawn --transpile-only src/server.ts",
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "@ai-sdk/openai": "^4.0.17",
     "@pinecone-database/pinecone": "^8.1.0",
