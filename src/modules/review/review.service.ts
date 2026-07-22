@@ -1,4 +1,4 @@
-import { streamObject } from 'ai';
+import { streamObject, embed } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { Pinecone } from '@pinecone-database/pinecone';
 import { SYSTEM_PROMPT, CodeReviewSchema, CodeReviewResult } from './review.schema';
@@ -15,55 +15,121 @@ export class ReviewService {
   private pineconeIndex;
 
   constructor() {
-    const pc = new Pinecone({ apiKey: env.PINECONE_API_KEY });
-    this.pineconeIndex = pc.index(env.PINECONE_INDEX_NAME);
+    try {
+      logger.info('Initializing Pinecone connection...');
+      const pc = new Pinecone({ apiKey: env.PINECONE_API_KEY });
+      this.pineconeIndex = pc.index(env.PINECONE_INDEX_NAME);
+      logger.info(`Pinecone connection initialized for index: ${env.PINECONE_INDEX_NAME}`);
+    } catch (err) {
+      logger.error('Pinecone initialization failed / connectivity issue:', err);
+    }
   }
 
   // 1. Vector Semantic Cache Search
   public async checkSemanticCache(codeSnippet: string): Promise<CodeReviewResult | null> {
-    try {
-      const queryResponse = await this.pineconeIndex.query({
-        vector: Array(1536).fill(0.1), // Placeholder for text similarity lookup
-        topK: 1,
-        includeMetadata: true,
-      });
+    const queryPromise = (async (): Promise<CodeReviewResult | null> => {
+      try {
+        logger.info('Generating embedding via google.textEmbeddingModel(gemini-embedding-001)...');
+        const { embedding } = await embed({
+          model: google.textEmbeddingModel('gemini-embedding-001'),
+          value: codeSnippet,
+        });
+        logger.info(`Embedding generated successfully (dimension: ${embedding.length}). Querying Pinecone index...`);
 
-      if (queryResponse.matches[0]?.score && queryResponse.matches[0].score >= 0.96) {
-        logger.info('🎯 Vector Semantic Cache HIT');
-        return JSON.parse(queryResponse.matches[0].metadata?.cachedReview as string);
+        if (!this.pineconeIndex) {
+          logger.error('Pinecone connection is not initialized. Skipping cache query.');
+          return null;
+        }
+
+        const queryResponse = await this.pineconeIndex.query({
+          vector: embedding,
+          topK: 1,
+          includeMetadata: true,
+        });
+
+        const match = queryResponse.matches[0];
+        if (match && match.score && match.score >= 0.96 && match.metadata) {
+          logger.info(`🎯 Vector Semantic Cache HIT. Match Score: ${match.score}`);
+          return JSON.parse(match.metadata.cachedReview as string);
+        }
+        logger.info(`Semantic Cache Miss. Best match score: ${match?.score ?? 'none'}`);
+      } catch (err) {
+        logger.error('Semantic Cache Query failed / connectivity issue:', err);
       }
-    } catch (err) {
-      logger.warn('Semantic Cache Miss / Skipped');
-    }
-    return null;
+      return null;
+    })();
+
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => {
+        logger.warn('⚠️ Semantic Cache Query TIMEOUT (3000ms limit reached)');
+        resolve(null);
+      }, 3000)
+    );
+
+    return await Promise.race([queryPromise, timeoutPromise]);
   }
 
   // 2. Stream AI Review from Gemini 2.5 Flash
-// Inside src/modules/review/review.service.ts
+  public async generateReviewStream(code: string, language: string, userId?: string) {
+    logger.info(`Initializing Gemini stream review for language: ${language}, userId: ${userId || 'anonymous'}`);
+    try {
+      const stream = await streamObject({
+        model: google('gemini-3.5-flash'), // Updated active model identifier
+        system: SYSTEM_PROMPT,
+        prompt: `Language: ${language}\n\nCode:\n\`\`\`\n${code}\n\`\`\``,
+        schema: CodeReviewSchema,
+        onFinish: async ({ object }) => {
+          if (object) {
+            try {
+              // 1. Save to MongoDB
+              await ReviewModel.create({
+                userId: userId || 'anonymous',
+                language,
+                codeSnippet: code,
+                review: object,
+              });
+              logger.info('Saved code review result to MongoDB successfully.');
 
-public async generateReviewStream(code: string, language: string, userId?: string) {
-  return await streamObject({
-    model: google('gemini-3.5-flash'), // Updated active model identifier
-    system: SYSTEM_PROMPT,
-    prompt: `Language: ${language}\n\nCode:\n\`\`\`\n${code}\n\`\`\``,
-    schema: CodeReviewSchema,
-    onFinish: async ({ object }) => {
-      if (object) {
-        try {
-          await ReviewModel.create({
-            userId: userId || 'anonymous',
-            language,
-            codeSnippet: code,
-            review: object,
-          });
-          logger.info('Saved code review result to MongoDB');
-        } catch (dbErr) {
-          logger.error('Failed saving review to MongoDB', dbErr);
-        }
-      }
-    },
-  });
-}
+              // 2. Generate embedding and UPSERT to Pinecone
+              if (!this.pineconeIndex) {
+                logger.error('Pinecone connection is not initialized. Skipping upsert.');
+                return;
+              }
+
+              logger.info('Generating embedding for Pinecone upsert...');
+              const { embedding } = await embed({
+                model: google.textEmbeddingModel('gemini-embedding-001'),
+                value: code,
+              });
+
+              logger.info('Upserting review vector to Pinecone...');
+              await this.pineconeIndex.upsert({
+                records: [
+                  {
+                    id: `review-${Date.now()}`,
+                    values: embedding,
+                    metadata: {
+                      language,
+                      codeSnippet: code,
+                      cachedReview: JSON.stringify(object),
+                    },
+                  },
+                ]
+              });
+              logger.info('Successfully upserted review vector to Pinecone!');
+            } catch (err) {
+              logger.error('Failed saving audit payload / connection issue:', err);
+            }
+          }
+        },
+      });
+      logger.info('Gemini stream review connection established successfully.');
+      return stream;
+    } catch (err) {
+      logger.error('Gemini Stream Connection Error: Failed to initiate review stream', err);
+      throw err;
+    }
+  }
 
   // 3. Fetch User Audit History
   public async getHistory(userId: string = 'anonymous') {
