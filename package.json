@@ -14,6 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@ai-sdk/google": "^4.0.21",
     "@ai-sdk/openai": "^4.0.17",
     "@pinecone-database/pinecone": "^8.1.0",
     "@upstash/ratelimit": "^2.0.8",

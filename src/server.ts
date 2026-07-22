@@ -1,7 +1,8 @@
-import app from './src/app';
-import { connectDB } from './src/config/db';
-import { env } from './src/config/env';
-import { logger } from './src/shared/utils/logger';
+import { env } from "node:process";
+import app from "./app";
+import { connectDB } from "./config/db";
+import { logger } from "./shared/utils/logger";
+
 
 const startServer = async () => {
   // 1. Initialize DB Connection
