@@ -27,12 +27,26 @@ export class ReviewService {
 
   // 1. Vector Semantic Cache Search
   public async checkSemanticCache(codeSnippet: string): Promise<CodeReviewResult | null> {
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<null>((resolve) => {
+      timeoutId = setTimeout(() => {
+        logger.warn('⚠️ Semantic Cache Query TIMEOUT (3000ms limit reached)');
+        resolve(null);
+      }, 3000);
+    });
+
     const queryPromise = (async (): Promise<CodeReviewResult | null> => {
       try {
         logger.info('Generating embedding via google.textEmbeddingModel(gemini-embedding-001)...');
         const { embedding } = await embed({
           model: google.textEmbeddingModel('gemini-embedding-001'),
           value: codeSnippet,
+          providerOptions: {
+            google: {
+              outputDimensionality: 1536,
+            },
+          },
         });
         logger.info(`Embedding generated successfully (dimension: ${embedding.length}). Querying Pinecone index...`);
 
@@ -55,18 +69,19 @@ export class ReviewService {
         logger.info(`Semantic Cache Miss. Best match score: ${match?.score ?? 'none'}`);
       } catch (err) {
         logger.error('Semantic Cache Query failed / connectivity issue:', err);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
       return null;
     })();
 
-    const timeoutPromise = new Promise<null>((resolve) =>
-      setTimeout(() => {
-        logger.warn('⚠️ Semantic Cache Query TIMEOUT (3000ms limit reached)');
-        resolve(null);
-      }, 3000)
-    );
-
-    return await Promise.race([queryPromise, timeoutPromise]);
+    const result = await Promise.race([queryPromise, timeoutPromise]);
+    if (result && timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    return result;
   }
 
   // 2. Stream AI Review from Gemini 2.5 Flash
@@ -100,6 +115,11 @@ export class ReviewService {
               const { embedding } = await embed({
                 model: google.textEmbeddingModel('gemini-embedding-001'),
                 value: code,
+                providerOptions: {
+                  google: {
+                    outputDimensionality: 1536,
+                  },
+                },
               });
 
               logger.info('Upserting review vector to Pinecone...');
