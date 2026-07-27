@@ -2,7 +2,7 @@ import { streamObject, generateObject, embed } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { Pinecone } from '@pinecone-database/pinecone';
 import { CodeReviewSchema, CodeReviewResult, AgentReviewSchema } from './review.schema';
-import { SECURITY_AGENT_PROMPT, PERFORMANCE_AGENT_PROMPT, SYNTHESIZER_AGENT_PROMPT } from './review.prompts';
+import { SECURITY_AGENT_PROMPT, PERFORMANCE_AGENT_PROMPT, SYNTHESIZER_AGENT_PROMPT, CONSOLIDATED_REVIEWER_PROMPT } from './review.prompts';
 import { ReviewModel } from './review.model';
 import { env } from '../../config/env';
 import { logger } from '../../shared/utils/logger';
@@ -196,34 +196,13 @@ export class ReviewService {
         }
       }
 
-      // 1. Run specialized agents concurrently
-      logger.info('Invoking specialized agents concurrently (Security and Performance)...');
-      
-      const [securityResult, performanceResult] = await Promise.all([
-        generateObject({
-          model: google('gemini-3.5-flash'),
-          system: SECURITY_AGENT_PROMPT,
-          prompt: `Language: ${language}\n\nCode:\n\`\`\`\n${code}\n\`\`\``,
-          schema: AgentReviewSchema,
-        }),
-        generateObject({
-          model: google('gemini-3.5-flash'),
-          system: PERFORMANCE_AGENT_PROMPT,
-          prompt: `Language: ${language}\n\nCode:\n\`\`\`\n${code}\n\`\`\``,
-          schema: AgentReviewSchema,
-        }),
-      ]);
+      logger.info('Invoking consolidated Multi-Agent streaming reviewer...');
 
-      logger.info('Specialized agents finished execution. Passing findings to Synthesizer Agent...');
-
-      const securityIssues = securityResult.object?.issues || [];
-      const performanceIssues = performanceResult.object?.issues || [];
-
-      // 2. Stream AI Review from Synthesizer Agent
+      // 2. Stream AI Review from Consolidating Orchestrator Agent
       const stream = await streamObject({
         model: google('gemini-3.5-flash'),
-        system: SYNTHESIZER_AGENT_PROMPT,
-        prompt: `Original Code:
+        system: CONSOLIDATED_REVIEWER_PROMPT,
+        prompt: `Original Code to Audit:
 \`\`\`${language}
 ${code}
 \`\`\`
@@ -234,15 +213,7 @@ ${matchedRules.length > 0 ? matchedRules.join('\n') : 'No matching custom repo g
 
 ---
 Local AST Static Rules Findings (Verify and integrate where appropriate):
-${JSON.stringify(astIssues, null, 2)}
-
----
-Security Agent Findings:
-${JSON.stringify(securityIssues, null, 2)}
-
----
-Performance/Style Agent Findings:
-${JSON.stringify(performanceIssues, null, 2)}`,
+${JSON.stringify(astIssues, null, 2)}`,
         schema: CodeReviewSchema,
         onFinish: async ({ object }) => {
           if (object) {
