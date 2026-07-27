@@ -13,6 +13,10 @@ const envSchema = z.object({
   PINECONE_API_KEY: z.string().min(1, 'Pinecone API Key is required'),
   PINECONE_INDEX_NAME: z.string().default('code-reviews'),
   GITHUB_ACTION_SECRET: z.string().min(1, 'GitHub Action Secret is required'),
+  // Optional GitHub App Integration config
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

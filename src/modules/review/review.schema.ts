@@ -6,6 +6,7 @@ export const CodeReviewSchema = z.object({
   score: z.number().min(0).max(100).describe("Overall quality score out of 100."),
   issues: z.array(
     z.object({
+      filePath: z.string().optional().describe("The file path where the issue occurs."),
       severity: z.enum(['CRITICAL', 'WARNING', 'INFO']),
       line: z.number().optional().describe("Line number where defect occurs."),
       title: z.string().describe("Short descriptive title of the issue."),
@@ -27,3 +28,18 @@ Analyze the provided code snippet specifically for:
 
 Classify issue severities strictly into CRITICAL, WARNING, or INFO. Be direct, concise, and actionable.
 `;
+
+export const AgentReviewSchema = z.object({
+  issues: z.array(
+    z.object({
+      filePath: z.string().optional().describe("The file path where the issue occurs."),
+      severity: z.enum(['CRITICAL', 'WARNING', 'INFO']),
+      line: z.number().optional().describe("Line number where defect occurs."),
+      title: z.string().describe("Short descriptive title of the issue."),
+      description: z.string().describe("Detailed explanation of defect or vulnerability."),
+      suggestion: z.string().describe("Recommended code fix or refactored snippet."),
+    })
+  ),
+});
+
+export type AgentReviewResult = z.infer<typeof AgentReviewSchema>;
